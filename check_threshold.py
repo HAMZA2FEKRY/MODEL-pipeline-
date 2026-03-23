@@ -3,7 +3,7 @@ import mlflow
 import sys
 import os
 
-THRESHOLD = 0.99
+THRESHOLD = 0.999
 
 mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
 
