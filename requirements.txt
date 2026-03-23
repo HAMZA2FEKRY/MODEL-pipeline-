@@ -1,0 +1,5 @@
+mlflow
+torch
+torchvision
+scikit-learn
+dvc
