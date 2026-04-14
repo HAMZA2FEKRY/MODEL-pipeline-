@@ -2,14 +2,50 @@ name: ML Validation and Deployment Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]       # Run linter on ALL branches, train is gated separately
   workflow_dispatch:
 
 jobs:
 
-  validate:
+  # ──────────────────────────────────────────────────────────────
+  # JOB 1: Linter 
+  # ──────────────────────────────────────────────────────────────
+  linter:
+    name: Lint Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install flake8
+        run: pip install flake8
+
+      - name: Run linter
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 2: Train & Validate — expensive GPU job, gated by 3 conditions
+  #
+  # CONDITIONS (all three must be true):
+  #   1. linter job must pass         → needs: linter
+  #   2. branch must be main          → github.ref == 'refs/heads/main'
+  #   3. commit message has [run-train] → contains(github.event.head_commit.message, '[run-train]')
+  # ──────────────────────────────────────────────────────────────
+  train:
     name: Train & Validate Model
     runs-on: ubuntu-latest
+    needs: linter
+
+    if: |
+      needs.linter.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[run-train]')
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,10 +72,36 @@ jobs:
           name: model-info
           path: model_info.txt
 
+      # ── Runs ONLY when a step above fails ──
+      - name: Collect error logs on failure
+        if: failure()
+        run: |
+          echo "Training failed at $(date)" > error_logs.txt
+          echo "Branch: ${{ github.ref }}" >> error_logs.txt
+          echo "Commit SHA: ${{ github.sha }}" >> error_logs.txt
+          echo "Commit message: ${{ github.event.head_commit.message }}" >> error_logs.txt
+          echo "Runner OS: ${{ runner.os }}" >> error_logs.txt
+
+      - name: Upload error_logs.txt as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-logs-${{ github.run_id }}
+          path: error_logs.txt
+          retention-days: 7
+
+      # ── Runs ALWAYS — success or failure ──
+      - name: Cleanup temporary cloud volumes
+        if: always()
+        run: echo "Cleaning up temporary cloud volumes..."
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 3: Deploy — unchanged from Assignment 5, depends on train
+  # ──────────────────────────────────────────────────────────────
   deploy:
     name: Check Threshold & Deploy
     runs-on: ubuntu-latest
-    needs: validate
+    needs: train
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
